@@ -3,6 +3,7 @@ import pandas as pd
 import unicodedata
 import re
 import os
+import io
 
 # Configuración inicial de la página Streamlit
 st.set_page_config(
@@ -21,7 +22,6 @@ MUNICIPIOS_OBJETIVO_NORM = [
     "san agustin tlaxiaca"
 ]
 
-# Lista de las 11 empresas ya trabajadas inicialmente por la compañera
 EMPRESAS_CONTACTADAS = [
     {"id": 1, "nombre": "TRANSTELL", "tel": "7717170909"},
     {"id": 2, "nombre": "Logística Inteligente Nacional", "tel": "5546084544"},
@@ -77,7 +77,7 @@ def guardar_historial(df_actual):
     try:
         registros_guardar = []
         for _, row in df_actual.iterrows():
-            if row.get("Contactado", False) or (row.get("Notas") and row.get("Notas") != "No disponible"):
+            if row.get("Contactado", False) or (row.get("Notas") and str(row.get("Notas")).strip() not in ["", "No disponible"]):
                 registros_guardar.append({
                     "Nombre_Norm": normalizar_texto(row["Nombre"]),
                     "Nombre": row["Nombre"],
@@ -112,6 +112,52 @@ def es_empresa_contactada_previa(row):
                 return True
 
     return False
+
+def generar_excel_formateado(df):
+    """Genera un archivo ejecutable nativo de Excel (.xlsx) con columnas anchas y encabezados elegantes."""
+    output = io.BytesIO()
+    df_export = df.copy()
+    
+    # Convertir el booleano 'Contactado' a texto estructurado "Sí" / "No"
+    if "Contactado" in df_export.columns:
+        df_export["Contactado"] = df_export["Contactado"].map({True: "Sí", False: "No"})
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_export.to_excel(writer, index=False, sheet_name="Prospectos_Bodegas")
+        worksheet = writer.sheets["Prospectos_Bodegas"]
+        
+        # Estilos para encabezados (Fondo azul oscuro, texto blanco en negrita)
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        
+        header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        thin_border = Border(
+            left=Side(style='thin', color='D9D9D9'),
+            right=Side(style='thin', color='D9D9D9'),
+            top=Side(style='thin', color='D9D9D9'),
+            bottom=Side(style='thin', color='D9D9D9')
+        )
+
+        for col_idx, col in enumerate(worksheet.columns, start=1):
+            max_len = 0
+            for cell in col:
+                # Estilos de encabezado
+                if cell.row == 1:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = center_align
+                else:
+                    cell.border = thin_border
+                
+                val_str = str(cell.value or '')
+                if len(val_str) > max_len:
+                    max_len = len(val_str)
+
+            col_letter = col[0].column_letter
+            worksheet.column_dimensions[col_letter].width = max(max_len + 4, 14)
+
+    return output.getvalue()
 
 def cargar_y_procesar_datos():
     file_path = "INEGI_DENUE_06082026.csv"
@@ -188,7 +234,6 @@ def cargar_y_procesar_datos():
         nombre_norm = normalizar_texto(row["Nombre"])
         es_previo = es_empresa_contactada_previa(row)
         
-        # Si ya fue guardado con check manualmente o era de la lista previa de la compañera
         esta_marcado = dict_contactados.get(nombre_norm, es_previo)
         nota_guardada = dict_notas.get(nombre_norm, "")
 
@@ -260,7 +305,20 @@ if not df_todos.empty:
         st.metric(label="Empresas Contactadas / Excluidas", value=f"{total_contactados} marcas")
 
     st.markdown("---")
-    st.info("💡 **Tip:** Puedes marcar la casilla **Contactado** o escribir **Notas** directamente en la tabla. Los cambios se guardarán automáticamente.")
+
+    # Cabecera de controles superiores (Boton de descarga de Excel)
+    top_col1, top_col2 = st.columns([3, 1])
+    with top_col1:
+        st.info("💡 **Tip:** Puedes marcar la casilla **Contactado** o escribir **Notas** directamente en la tabla. Se guardarán automáticamente.")
+    with top_col2:
+        excel_bytes = generar_excel_formateado(df_display)
+        st.download_button(
+            label="📊 Exportar a Excel (.xlsx)",
+            data=excel_bytes,
+            file_name="Prospectos_Bodegas_Radio20km.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Descarga la lista actual formateada en filas y columnas nativas de Microsoft Excel."
+        )
 
     # Configuración de columnas interactivas con st.data_editor
     column_config = {
@@ -288,7 +346,7 @@ if not df_todos.empty:
         "Estatus CRM": st.column_config.TextColumn("Estatus CRM", disabled=True)
     }
 
-    # Renderizar la tabla interactiva con st.data_editor
+    # Renderizar la tabla interactiva
     df_editado = st.data_editor(
         df_display,
         column_config=column_config,
@@ -297,7 +355,7 @@ if not df_todos.empty:
         key="editor_prospectos_persistente"
     )
 
-    # Detectar cambios y guardar automáticamente la persistencia
+    # Guardar automáticamente la persistencia en CSV
     guardar_historial(df_editado)
 
 else:
