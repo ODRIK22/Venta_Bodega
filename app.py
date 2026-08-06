@@ -114,50 +114,54 @@ def es_empresa_contactada_previa(row):
     return False
 
 def generar_excel_formateado(df):
-    """Genera un archivo ejecutable nativo de Excel (.xlsx) con columnas anchas y encabezados elegantes."""
-    output = io.BytesIO()
+    """Genera un archivo nativo de Excel (.xlsx) si openpyxl está disponible, o CSV estructurado por punto y coma (;) como respaldo."""
     df_export = df.copy()
-    
-    # Convertir el booleano 'Contactado' a texto estructurado "Sí" / "No"
     if "Contactado" in df_export.columns:
         df_export["Contactado"] = df_export["Contactado"].map({True: "Sí", False: "No"})
 
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_export.to_excel(writer, index=False, sheet_name="Prospectos_Bodegas")
-        worksheet = writer.sheets["Prospectos_Bodegas"]
-        
-        # Estilos para encabezados (Fondo azul oscuro, texto blanco en negrita)
+    try:
+        import openpyxl
         from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-        
-        header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-        header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-        center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        thin_border = Border(
-            left=Side(style='thin', color='D9D9D9'),
-            right=Side(style='thin', color='D9D9D9'),
-            top=Side(style='thin', color='D9D9D9'),
-            bottom=Side(style='thin', color='D9D9D9')
-        )
 
-        for col_idx, col in enumerate(worksheet.columns, start=1):
-            max_len = 0
-            for cell in col:
-                # Estilos de encabezado
-                if cell.row == 1:
-                    cell.fill = header_fill
-                    cell.font = header_font
-                    cell.alignment = center_align
-                else:
-                    cell.border = thin_border
-                
-                val_str = str(cell.value or '')
-                if len(val_str) > max_len:
-                    max_len = len(val_str)
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df_export.to_excel(writer, index=False, sheet_name="Prospectos_Bodegas")
+            worksheet = writer.sheets["Prospectos_Bodegas"]
+            
+            header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+            header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+            center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            thin_border = Border(
+                left=Side(style='thin', color='D9D9D9'),
+                right=Side(style='thin', color='D9D9D9'),
+                top=Side(style='thin', color='D9D9D9'),
+                bottom=Side(style='thin', color='D9D9D9')
+            )
 
-            col_letter = col[0].column_letter
-            worksheet.column_dimensions[col_letter].width = max(max_len + 4, 14)
+            for col_idx, col in enumerate(worksheet.columns, start=1):
+                max_len = 0
+                for cell in col:
+                    if cell.row == 1:
+                        cell.fill = header_fill
+                        cell.font = header_font
+                        cell.alignment = center_align
+                    else:
+                        cell.border = thin_border
+                    
+                    val_str = str(cell.value or '')
+                    if len(val_str) > max_len:
+                        max_len = len(val_str)
 
-    return output.getvalue()
+                col_letter = col[0].column_letter
+                worksheet.column_dimensions[col_letter].width = max(max_len + 4, 14)
+
+        return output.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Prospectos_Bodegas_Radio20km.xlsx"
+
+    except ImportError:
+        # Respaldar con CSV estructurado con separador de punto y coma ';' y BOM UTF-8 para Excel en español
+        output = io.BytesIO()
+        csv_str = df_export.to_csv(index=False, sep=";", encoding="utf-8-sig")
+        return csv_str.encode("utf-8-sig"), "text/csv", "Prospectos_Bodegas_Radio20km.csv"
 
 def cargar_y_procesar_datos():
     file_path = "INEGI_DENUE_06082026.csv"
@@ -306,18 +310,18 @@ if not df_todos.empty:
 
     st.markdown("---")
 
-    # Cabecera de controles superiores (Boton de descarga de Excel)
+    # Cabecera de controles superiores (Boton de descarga de Excel / CSV)
     top_col1, top_col2 = st.columns([3, 1])
     with top_col1:
         st.info("💡 **Tip:** Puedes marcar la casilla **Contactado** o escribir **Notas** directamente en la tabla. Se guardarán automáticamente.")
     with top_col2:
-        excel_bytes = generar_excel_formateado(df_display)
+        file_bytes, mime_type, file_name = generar_excel_formateado(df_display)
         st.download_button(
-            label="📊 Exportar a Excel (.xlsx)",
-            data=excel_bytes,
-            file_name="Prospectos_Bodegas_Radio20km.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            help="Descarga la lista actual formateada en filas y columnas nativas de Microsoft Excel."
+            label="📊 Exportar a Excel",
+            data=file_bytes,
+            file_name=file_name,
+            mime=mime_type,
+            help="Descarga la lista actual formateada para abrir en Microsoft Excel."
         )
 
     # Configuración de columnas interactivas con st.data_editor
